@@ -1,9 +1,9 @@
 version: '2.0'
 services:
-  web:
-    build: .
-    depends_on:
-      - pgbouncer
+  # web:
+  #   build: .
+  #   depends_on:
+  #     - pgbouncer
   pgbouncer:
     image: pgbouncer/pgbouncer
     ports:

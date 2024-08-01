@@ -12,7 +12,7 @@ import (
 )
 
 func NewDatabasePool(ctx context.Context) (*pgxpool.Pool, error) {
-	s := "host=pgbouncer port=6432 user=postgres password=secret dbname=postgres pool_max_conns=10 default_query_exec_mode=simple_protocol"
+	s := "host=localhost port=6432 user=postgres password=secret dbname=postgres pool_max_conns=10 default_query_exec_mode=simple_protocol"
 	c, err := pgxpool.ParseConfig(s)
 	if err != nil {
 		panic("failed to parse postgres config: " + err.Error())
@@ -20,51 +20,44 @@ func NewDatabasePool(ctx context.Context) (*pgxpool.Pool, error) {
 
 	c.ConnConfig.BuildContextWatcherHandler = func(pgConn *pgconn.PgConn) ctxwatch.Handler {
 		// return &pgconn.DeadlineContextWatcherHandler{Conn: pgConn.Conn()}
-		return &SyncCancelRequestContextWatcherHandler{Conn: pgConn}
+		return &SyncCancelRequestContextWatcherHandler{PgConn: pgConn}
 	}
 
 	return pgxpool.NewWithConfig(ctx, c)
 }
 
 type SyncCancelRequestContextWatcherHandler struct {
-	Conn *pgconn.PgConn
-
-	// CancelRequestDelay is the delay before sending the cancel request to the server.
-	CancelRequestDelay time.Duration
-
-	// DeadlineDelay is the delay to set on the deadline set on net.Conn when the context is canceled.
-	DeadlineDelay time.Duration
-
-	cancelFinishedChan             chan struct{}
-	handleUnwatchAfterCancelCalled func()
+	PgConn *pgconn.PgConn
+	// Logger *zap.Logger
 }
 
+//nolint:contextcheck
 func (h *SyncCancelRequestContextWatcherHandler) HandleCancel(context.Context) {
-	h.cancelFinishedChan = make(chan struct{})
-	defer close(h.cancelFinishedChan)
+	// h.PgConn.Conn().Close()
 
-	var handleUnwatchedAfterCancelCalledCtx context.Context
-	handleUnwatchedAfterCancelCalledCtx, h.handleUnwatchAfterCancelCalled = context.WithCancel(context.Background())
+	h.PgConn.Conn().SetDeadline(time.Now().Add(1 * time.Second))
 
-	deadline := time.Now().Add(h.DeadlineDelay)
-	h.Conn.Conn().SetDeadline(deadline)
-
-	select {
-	case <-handleUnwatchedAfterCancelCalledCtx.Done():
-		return
-	case <-time.After(h.CancelRequestDelay):
-	}
-
-	cancelRequestCtx, cancel := context.WithDeadline(handleUnwatchedAfterCancelCalledCtx, deadline)
-	defer cancel()
-	h.Conn.CancelRequest(cancelRequestCtx)
+	// select {
+	// // case <-h.PgConn.CleanupDone():
+	// // h.Logger.Info("HandleCancel: CleanupDone")
+	// case <-ctx.Done():
+	// 	// h.Logger.Info("HandleCancel: CtxDone")
+	// }
 }
 
 func (h *SyncCancelRequestContextWatcherHandler) HandleUnwatchAfterCancel() {
-	h.handleUnwatchAfterCancelCalled()
-	<-h.cancelFinishedChan
+	h.PgConn.Conn().SetDeadline(time.Time{})
 
-	h.Conn.Conn().SetDeadline(time.Time{})
+	// h.PgConn.Conn().SetDeadline(time.Time{})
+
+	// <-h.PgConn.CleanupDone()
+
+	// ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second) //nolint:gomnd
+	// defer cancel()
+
+	// h.PgConn.Close(context.Background())
+
+	// h.PgConn.Conn().Close()
 }
 
 func main() {
@@ -101,7 +94,7 @@ func worker(ctx context.Context, db *pgxpool.Pool, wg *sync.WaitGroup) {
 }
 
 func handle(ctx context.Context, db *pgxpool.Pool) {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Millisecond)
+	ctx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
 	defer cancel()
 
 	q := `select pg_sleep(10)`
